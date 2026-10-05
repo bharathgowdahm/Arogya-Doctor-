@@ -5,6 +5,51 @@ import requests
 
 st.set_page_config(page_title="ArogyaMitra AI + Reminder", page_icon="💊", layout="wide")
 
+# ===== AUTHENTICATION SYSTEM =====
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.session_state.family_name = ""
+
+USERS = {
+    "bharath": {"password":"arogya123", "family":"Gowda Family - Devanahalli", "role":"Admin"},
+    "ajji": {"password":"1234", "family":"Ajji - Devanahalli", "role":"Elder"},
+    "amma": {"password":"amma123", "family":"Amma", "role":"Family"},
+    "demo": {"password":"demo", "family":"Demo Family", "role":"Demo"},
+}
+
+def login_page():
+    st.markdown("## 🔐 ArogyaMitra Login - ಕುಟುಂಬ ಲಾಗಿನ್")
+    st.caption("Login to save your family medicines securely")
+    col1,col2 = st.columns([2,1])
+    with col1:
+        with st.container(border=True):
+            username = st.text_input("Username", placeholder="bharath / ajji / demo")
+            password = st.text_input("Password", type="password", placeholder="arogya123")
+            c1,c2 = st.columns(2)
+            if c1.button("🔓 Login", type="primary", use_container_width=True):
+                if username in USERS and USERS[username]["password"] == password:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.family_name = USERS[username]["family"]
+                    st.success(f"Welcome {USERS[username]['family']}!")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error("Wrong username/password - Try demo/demo")
+            if c2.button("Demo Login", use_container_width=True):
+                st.session_state.authenticated = True
+                st.session_state.username = "demo"
+                st.session_state.family_name = "Demo Family"
+                st.rerun()
+    with col2:
+        st.info("**Demo Accounts:**\n- bharath / arogya123\n- ajji / 1234\n- demo / demo")
+        st.warning("In production, connect Firebase Auth")
+    st.stop()
+
+if not st.session_state.authenticated:
+    login_page()
+
 # Language
 lang = st.sidebar.selectbox("Language / ಭಾಷೆ", ["ಕನ್ನಡ", "English"])
 def t(en, kn): return kn if lang=="ಕನ್ನಡ" else en
@@ -101,6 +146,13 @@ if "taken" not in st.session_state:
     st.session_state.taken = {}
 if "reminder_times" not in st.session_state:
     st.session_state.reminder_times = {"morning":time(8,0),"noon":time(13,0),"night":time(21,0)}
+
+# Show logged in user + logout
+st.sidebar.success(f"👤 {{st.session_state.family_name}} ({{st.session_state.username}})")
+if st.sidebar.button("🚪 Logout"):
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.rerun()
 
 # Sidebar - Reminder Setup
 st.sidebar.markdown(f"### {t('⚙️ Reminder Setup','⚙️ ರಿಮೈಂಡರ್ ಸೆಟಪ್')}")

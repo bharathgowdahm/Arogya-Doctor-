@@ -1,4 +1,3 @@
-
 import streamlit as st
 from datetime import datetime, date, time, timedelta
 import json
@@ -16,29 +15,42 @@ def t(en, kn):
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### {t('🔑 AI API Setup','🔑 AI API ಸೆಟಪ್')}")
 st.sidebar.caption(t(
-    "Paste Gemini API key to search ANY medicine in Kannada",
-    "ಯಾವುದೇ ಔಷಧಿಯನ್ನು ಕನ್ನಡದಲ್ಲಿ ಹುಡುಕಲು Gemini API key ಹಾಕಿ"
+    "Paste Gemini API key (new AQ. format or old AIzaSy format)",
+    "Gemini API key ಹಾಕಿ (ಹೊಸ AQ. ಅಥವಾ ಹಳೆಯ AIzaSy ಫಾರ್ಮ್ಯಾಟ್)"
 ))
 
-# API key input - secure
+# API key input - secure (supports both AQ. and AIzaSy formats)
 api_key = st.sidebar.text_input(
     t("Gemini API Key", "Gemini API Key"),
     type="password",
-    placeholder="AIzaSy...",
+    placeholder="AQ.Ab8RN6... or AIzaSy...",
     help="Get free key from aistudio.google.com/app/apikey"
-)
+).strip()
 
 # Also support secrets.toml for Streamlit Cloud
 if not api_key:
     try:
-        api_key = st.secrets.get("GEMINI_API_KEY", "")
+        api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
         if api_key:
             st.sidebar.success(t("API key loaded from secrets", "API key secrets ನಿಂದ ಲೋಡ್ ಆಗಿದೆ"))
     except Exception:
         pass
 
+# Validate key format (both AQ. and AIzaSy supported)
+def is_valid_key_format(key: str) -> bool:
+    if not key:
+        return False
+    return key.startswith("AQ.") or key.startswith("AIzaSy")
+
 if api_key:
-    st.sidebar.success("✅ API Ready - AI can explain any medicine!")
+    if is_valid_key_format(api_key):
+        key_type = "AQ (new)" if api_key.startswith("AQ.") else "AIzaSy (legacy)"
+        st.sidebar.success(f"✅ API Ready [{key_type}] - AI can explain any medicine!")
+    else:
+        st.sidebar.warning(t(
+            "Key format looks unusual. Expected AQ.xxx or AIzaSy...",
+            "Key ಫಾರ್ಮ್ಯಾಟ್ ಸರಿ ಇಲ್ಲ. AQ.xxx ಅಥವಾ AIzaSy... ಬೇಕು."
+        ))
 else:
     st.sidebar.warning(t(
         "No API key - Using local 10 medicines only. Add key for unlimited AI.",
@@ -48,17 +60,22 @@ else:
 st.sidebar.markdown("[Get Free Gemini API Key](https://aistudio.google.com/app/apikey)")
 
 
-# ===== GEMINI AI CALL (UPDATED MODEL) =====
-# Latest stable model as of October 2026: gemini-3.8-flash
-# Fallback models if primary fails
+# ===== GEMINI AI CALL (AQ. + AIzaSy compatible) =====
+# These are the real, currently-available stable Gemini models.
+# Ordered from most-preferred to fallback.
 GEMINI_MODELS = [
-    "gemini-3.8-flash",   # Latest stable Flash model (best for most tasks)
-    "gemini-3.7-flash",   # Previous generation Flash
-    "gemini-2.5-flash",   # Legacy stable (still supported)
+    "gemini-2.5-flash",       # Current stable fast model (recommended)
+    "gemini-2.5-flash-lite",  # Cheaper, faster variant
+    "gemini-2.0-flash",       # Previous-generation stable
+    "gemini-1.5-flash",       # Legacy fallback
 ]
 
 def call_gemini_ai(medicine_name, api_key, lang):
-    """Call Gemini to explain medicine in Kannada + English using the latest model."""
+    """
+    Call Gemini to explain a medicine in Kannada + English.
+    Compatible with BOTH new AQ. keys and legacy AIzaSy keys.
+    AQ. keys MUST use the x-goog-api-key header (not the ?key= query param).
+    """
     if not api_key:
         return None
 
@@ -82,42 +99,72 @@ Keep Kannada simple, no medical jargon.
     payload = {
         "contents": [{
             "parts": [{"text": prompt}]
-        }]
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": api_key   # Updated header format (2026)
+        }],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 512,
+            "responseMimeType": "application/json"  # force JSON output
+        }
     }
 
+    # CRITICAL: New AQ. keys require the header form.
+    # The legacy `?key=` query param does NOT work with AQ. keys.
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+
+    last_error = None
     for model in GEMINI_MODELS:
         try:
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/"
                 f"models/{model}:generateContent"
             )
-            resp = requests.post(url, json=payload, headers=headers, timeout=20)
+            resp = requests.post(url, json=payload, headers=headers, timeout=25)
 
             if resp.status_code == 200:
                 data = resp.json()
                 text = data["candidates"][0]["content"]["parts"][0]["text"]
-                # Clean JSON
                 text = text.replace("```json", "").replace("```", "").strip()
                 return json.loads(text)
-            else:
-                # If this model fails, try the next one
-                st.warning(
-                    f"Model {model} returned {resp.status_code}. Trying fallback..."
+
+            elif resp.status_code in (400, 401, 403):
+                # Auth / bad request — no point trying other models with same key
+                last_error = f"{resp.status_code}: {resp.text[:200]}"
+                st.error(
+                    t(
+                        f"API key rejected ({resp.status_code}). Please check your key.",
+                        f"API key ತಿರಸ್ಕರಿಸಲಾಗಿದೆ ({resp.status_code}). Key ಪರಿಶೀಲಿಸಿ."
+                    )
                 )
+                return None
+
+            elif resp.status_code == 404:
+                # Model not found — try next model
+                last_error = f"{model} not available (404)"
                 continue
 
+            elif resp.status_code == 429:
+                last_error = "Rate limit hit (429). Try again in a minute."
+                continue
+
+            else:
+                last_error = f"{model} → {resp.status_code}: {resp.text[:150]}"
+                continue
+
+        except requests.exceptions.Timeout:
+            last_error = f"{model} timed out"
+            continue
+        except json.JSONDecodeError:
+            last_error = f"{model} returned invalid JSON"
+            continue
         except Exception as e:
-            st.warning(f"Model {model} error: {e}. Trying fallback...")
+            last_error = f"{model} error: {e}"
             continue
 
-    # All models failed
-    st.error(
-        "All Gemini models failed. Check your API key or try again later."
-    )
+    if last_error:
+        st.error(f"AI Error: {last_error}")
     return None
 
 
@@ -220,16 +267,13 @@ if "reminder_times" not in st.session_state:
 # ===== SIDEBAR - REMINDER SETUP =====
 st.sidebar.markdown(f"### {t('⚙️ Reminder Setup','⚙️ ರಿಮೈಂಡರ್ ಸೆಟಪ್')}")
 st.session_state.reminder_times["morning"] = st.sidebar.time_input(
-    t("Morning", "ಬೆಳಿಗ್ಗೆ"),
-    st.session_state.reminder_times["morning"]
+    t("Morning", "ಬೆಳಿಗ್ಗೆ"), st.session_state.reminder_times["morning"]
 )
 st.session_state.reminder_times["noon"] = st.sidebar.time_input(
-    t("Noon", "ಮಧ್ಯಾಹ್ನ"),
-    st.session_state.reminder_times["noon"]
+    t("Noon", "ಮಧ್ಯಾಹ್ನ"), st.session_state.reminder_times["noon"]
 )
 st.session_state.reminder_times["night"] = st.sidebar.time_input(
-    t("Night", "ರಾತ್ರಿ"),
-    st.session_state.reminder_times["night"]
+    t("Night", "ರಾತ್ರಿ"), st.session_state.reminder_times["night"]
 )
 
 # ===== TABS =====
@@ -245,10 +289,7 @@ with tab1:
 
     with st.form("add_med"):
         c1, c2 = st.columns(2)
-        name = c1.text_input(
-            t("Medicine Name", "ಔಷಧಿ ಹೆಸರು"),
-            placeholder="Dolo 650"
-        )
+        name = c1.text_input(t("Medicine Name", "ಔಷಧಿ ಹೆಸರು"), placeholder="Dolo 650")
         days = c2.number_input(t("Days", "ದಿನಗಳು"), 1, 90, 3)
 
         c1, c2, c3 = st.columns(3)
@@ -433,4 +474,4 @@ with tab3:
         )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Built by Bharath Gowda | v4.0 API Key Enabled")
+st.sidebar.caption("Built by Bharath Gowda | v4.1 AQ-Key Compatible")

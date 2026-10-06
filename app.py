@@ -1,80 +1,69 @@
 import streamlit as st
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time
 import json
 import requests
 
 st.set_page_config(page_title="ArogyaMitra AI + Reminder", page_icon="💊", layout="wide")
 
-# Language
+# ================= LANGUAGE =================
 lang = st.sidebar.selectbox("Language / ಭಾಷೆ", ["ಕನ್ನಡ", "English"])
 
 def t(en, kn):
     return kn if lang == "ಕನ್ನಡ" else en
 
-# ===== API KEY SETUP - SIDEBAR =====
+# ================= API KEY SETUP =================
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### {t('🔑 AI API Setup','🔑 AI API ಸೆಟಪ್')}")
 st.sidebar.caption(t(
-    "Paste Gemini API key (new AQ. format or old AIzaSy format)",
-    "Gemini API key ಹಾಕಿ (ಹೊಸ AQ. ಅಥವಾ ಹಳೆಯ AIzaSy ಫಾರ್ಮ್ಯಾಟ್)"
+    "Paste Gemini API key (AQ.xxx or AIzaSyxxx)",
+    "Gemini API key ಹಾಕಿ (AQ.xxx ಅಥವಾ AIzaSyxxx)"
 ))
 
 api_key = st.sidebar.text_input(
     t("Gemini API Key", "Gemini API Key"),
     type="password",
-    placeholder="AQ.Ab8RN6... or AIzaSy...",
+    placeholder="AQ.Ab8RN6...",
     help="Get free key from aistudio.google.com/app/apikey"
 ).strip()
 
+# Fallback to Streamlit secrets
 if not api_key:
     try:
         api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
-        if api_key:
-            st.sidebar.success(t("API key loaded from secrets", "API key secrets ನಿಂದ ಲೋಡ್ ಆಗಿದೆ"))
     except Exception:
         pass
 
 def is_valid_key_format(key: str) -> bool:
-    if not key:
-        return False
-    return key.startswith("AQ.") or key.startswith("AIzaSy")
+    return bool(key) and (key.startswith("AQ.") or key.startswith("AIzaSy"))
 
 if api_key:
     if is_valid_key_format(api_key):
-        key_type = "AQ (new)" if api_key.startswith("AQ.") else "AIzaSy (legacy)"
-        st.sidebar.success(f"✅ API Ready [{key_type}] - AI can explain any medicine!")
+        kind = "AQ (new)" if api_key.startswith("AQ.") else "AIzaSy (legacy)"
+        st.sidebar.success(f"✅ API Ready [{kind}]")
     else:
         st.sidebar.warning(t(
-            "Key format looks unusual. Expected AQ.xxx or AIzaSy...",
+            "Key format unusual. Expected AQ.xxx or AIzaSy...",
             "Key ಫಾರ್ಮ್ಯಾಟ್ ಸರಿ ಇಲ್ಲ. AQ.xxx ಅಥವಾ AIzaSy... ಬೇಕು."
         ))
 else:
     st.sidebar.warning(t(
-        "No API key - Using local 10 medicines only. Add key for unlimited AI.",
-        "API key ಇಲ್ಲ - 10 ಔಷಧಿ ಮಾತ್ರ. ಅನಿಯಮಿತ AI ಗೆ key ಸೇರಿಸಿ."
+        "No API key — local 10 medicines only.",
+        "API key ಇಲ್ಲ — 10 ಔಷಧಿ ಮಾತ್ರ."
     ))
 
 st.sidebar.markdown("[Get Free Gemini API Key](https://aistudio.google.com/app/apikey)")
 
-
-# ===== GEMINI AI CALL (CURRENT MODELS - Oct 2026) =====
-# Gemini 1.5 is RETIRED. Using current stable models from:
-# https://ai.google.dev/gemini-api/docs/models
+# ================= FASTEST GEMINI MODELS =================
+# Ordered fastest-first. All are stable, free-tier eligible, and support JSON output.
 GEMINI_MODELS = [
-    "gemini-3.8-flash",        # Most intelligent Flash model (recommended)
-    "gemini-3.7-flash",        # Previous-gen Flash
-    "gemini-3.6-flash",        # Balanced Flash
-    "gemini-3.5-flash",        # Legacy Flash (stable)
-    "gemini-3.5-flash-lite",   # Fast, cost-effective
-    "gemini-3.1-flash-lite",   # Frontier-class at lower cost
+    "gemini-3.1-flash-lite",   # Fastest Gemini 3 (p50 ~1.5s, ~380 tok/s)
+    "gemini-3.5-flash-lite",   # Fast 3.5-class (GA Jul 2026)
+    "gemini-2.5-flash-lite",   # Ultra-fast legacy (TTFT 0.62s)
+    "gemini-3.8-flash",        # Fallback if all Lite models fail
 ]
 
 def call_gemini_ai(medicine_name, api_key, lang):
-    """
-    Call Gemini to explain a medicine in Kannada + English.
-    Compatible with BOTH new AQ. keys and legacy AIzaSy keys.
-    Uses CURRENT models (Gemini 1.5 is retired).
-    """
+    """Call Gemini with the fastest Flash-Lite model. Thinking disabled for speed."""
     if not api_key:
         return None
 
@@ -82,11 +71,11 @@ def call_gemini_ai(medicine_name, api_key, lang):
 You are a helpful medical assistant for Karnataka rural elders.
 Explain medicine: {medicine_name}
 
-Give answer in BOTH Kannada and English, simple language for elders (18px big text style).
+Give answer in BOTH Kannada and English, simple language for elders.
 Format strictly as JSON (no extra text):
 {{
   "use": "Fever / ಜ್ವರ (short)",
-  "kn": "Simple Kannada explanation in 2 lines, dosage when to take, e.g., ಜ್ವರಕ್ಕೆ, ಬೆಳಿಗ್ಗೆ 1 ಮಾತ್ರೆ...",
+  "kn": "Simple Kannada explanation in 2 lines, dosage when to take",
   "en": "Simple English explanation in 2 lines",
   "tip": "How to take: After food / ಊಟದ ನಂತರ",
   "side": "Side effect in Kannada + English short"
@@ -96,17 +85,18 @@ Keep Kannada simple, no medical jargon.
 """
 
     payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
+        "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 512,
-            "responseMimeType": "application/json"
+            "maxOutputTokens": 256,          # Lower = faster
+            "responseMimeType": "application/json",
+            "thinkingConfig": {              # Disable thinking for low latency
+                "thinkingBudget": 0
+            }
         }
     }
 
-    # New AQ. keys and AIzaSy keys both work with x-goog-api-key header.
+    # AQ. keys and AIzaSy keys both require x-goog-api-key header
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": api_key,
@@ -119,7 +109,7 @@ Keep Kannada simple, no medical jargon.
                 f"https://generativelanguage.googleapis.com/v1beta/"
                 f"models/{model}:generateContent"
             )
-            resp = requests.post(url, json=payload, headers=headers, timeout=25)
+            resp = requests.post(url, json=payload, headers=headers, timeout=20)
 
             if resp.status_code == 200:
                 data = resp.json()
@@ -128,26 +118,20 @@ Keep Kannada simple, no medical jargon.
                 return json.loads(text)
 
             elif resp.status_code in (400, 401, 403):
-                last_error = f"{resp.status_code}: {resp.text[:200]}"
-                st.error(
-                    t(
-                        f"API key rejected ({resp.status_code}). Please check your key.",
-                        f"API key ತಿರಸ್ಕರಿಸಲಾಗಿದೆ ({resp.status_code}). Key ಪರಿಶೀಲಿಸಿ."
-                    )
-                )
+                st.error(t(
+                    f"API key rejected ({resp.status_code}). Check your key.",
+                    f"API key ತಿರಸ್ಕರಿಸಲಾಗಿದೆ ({resp.status_code}). Key ಪರಿಶೀಲಿಸಿ."
+                ))
                 return None
 
             elif resp.status_code == 404:
-                # Model retired — try next model
-                last_error = f"{model} not available (404)"
+                last_error = f"{model} not available"
                 continue
-
             elif resp.status_code == 429:
-                last_error = "Rate limit hit (429). Try again in a minute."
+                last_error = "Rate limit hit. Wait a minute."
                 continue
-
             else:
-                last_error = f"{model} → {resp.status_code}: {resp.text[:150]}"
+                last_error = f"{model} → {resp.status_code}"
                 continue
 
         except requests.exceptions.Timeout:
@@ -164,8 +148,7 @@ Keep Kannada simple, no medical jargon.
         st.error(f"AI Error: {last_error}")
     return None
 
-
-# ===== LOCAL KNOWLEDGE BASE (Fallback) =====
+# ================= LOCAL KNOWLEDGE BASE =================
 MED_KB = {
     "paracetamol": {
         "use": "Fever / ಜ್ವರ",
@@ -239,14 +222,14 @@ MED_KB = {
     },
 }
 
-# ===== APP TITLE =====
+# ================= APP TITLE =================
 st.title(t("💊 ArogyaMitra Pro - AI + Reminder", "💊 ಆರೋಗ್ಯಮಿತ್ರ ಪ್ರೊ - AI + ರಿಮೈಂಡರ್"))
 st.caption(t(
     "Paste API key in sidebar → Search ANY medicine in Kannada",
-    "ಸೈಡ್‌ಬಾರ್‌ನಲ್ಲಿ API key ಹಾಕಿ → ಯಾವುದೇ ಔಷಧಿ ಕನ್ನಡದಲ್ಲಿ ಹುಡುಕಿ"
+    "ಸೈಡ್ಬಾರ್ನಲ್ಲಿ API key ಹಾಕಿ → ಯಾವುದೇ ಔಷಧಿ ಕನ್ನಡದಲ್ಲಿ ಹುಡುಕಿ"
 ))
 
-# ===== SESSION STATES =====
+# ================= SESSION STATE =================
 if "meds" not in st.session_state:
     st.session_state.meds = [
         {"name": "Dolo 650", "m": 1, "n": 0, "ni": 1, "days": 3, "mt": time(8, 0), "nt": time(21, 0)},
@@ -261,7 +244,7 @@ if "reminder_times" not in st.session_state:
         "night": time(21, 0)
     }
 
-# ===== SIDEBAR - REMINDER SETUP =====
+# ================= SIDEBAR REMINDER SETUP =================
 st.sidebar.markdown(f"### {t('⚙️ Reminder Setup','⚙️ ರಿಮೈಂಡರ್ ಸೆಟಪ್')}")
 st.session_state.reminder_times["morning"] = st.sidebar.time_input(
     t("Morning", "ಬೆಳಿಗ್ಗೆ"), st.session_state.reminder_times["morning"]
@@ -273,14 +256,14 @@ st.session_state.reminder_times["night"] = st.sidebar.time_input(
     t("Night", "ರಾತ್ರಿ"), st.session_state.reminder_times["night"]
 )
 
-# ===== TABS =====
+# ================= TABS =================
 tab1, tab2, tab3 = st.tabs([
     t("📋 My Medicines", "📋 ನನ್ನ ಔಷಧಿಗಳು"),
-    t("🤖 AI Search (with API key)", "🤖 AI ಹುಡುಕಾಟ"),
+    t("🤖 AI Search", "🤖 AI ಹುಡುಕಾಟ"),
     t("⏰ Reminders", "⏰ ರಿಮೈಂಡರ್")
 ])
 
-# ===== TAB 1: MY MEDICINES =====
+# ---------- TAB 1: MY MEDICINES ----------
 with tab1:
     st.subheader(t("Add Medicine with Reminder", "ರಿಮೈಂಡರ್ ಜೊತೆ ಔಷಧಿ ಸೇರಿಸಿ"))
 
@@ -321,7 +304,7 @@ with tab1:
                 st.session_state.meds.pop(i)
                 st.rerun()
 
-# ===== TAB 2: AI SEARCH =====
+# ---------- TAB 2: AI SEARCH ----------
 with tab2:
     st.subheader(t(
         "🤖 AI Search - Any Medicine in Kannada",
@@ -330,10 +313,8 @@ with tab2:
 
     if not api_key:
         st.info(t(
-            "👈 Paste Gemini API key in sidebar to enable AI for ANY medicine. "
-            "Without key, only 10 local medicines work.",
-            "👈 ಸೈಡ್‌ಬಾರ್‌ನಲ್ಲಿ Gemini API key ಹಾಕಿದರೆ ಯಾವುದೇ ಔಷಧಿ AI ವಿವರಿಸುತ್ತದೆ. "
-            "Key ಇಲ್ಲದಿದ್ದರೆ 10 ಮಾತ್ರ."
+            "👈 Paste Gemini API key in sidebar to enable AI for ANY medicine.",
+            "👈 ಸೈಡ್ಬಾರ್ನಲ್ಲಿ Gemini API key ಹಾಕಿದರೆ ಯಾವುದೇ ಔಷಧಿ AI ವಿವರಿಸುತ್ತದೆ."
         ))
 
     q = st.text_input(
@@ -350,6 +331,7 @@ with tab2:
     if search_clicked and q:
         ql = q.lower().strip()
 
+        # Check local KB first
         found_local = None
         for k in MED_KB:
             if k in ql or ql in k:
@@ -390,8 +372,8 @@ with tab2:
                 st.markdown(f"**{d['en']}**")
             else:
                 st.warning(t(
-                    f"'{q}' not in local DB. Add Gemini API key in sidebar to search ANY medicine.",
-                    f"ಸ್ಥಳೀಯ DB ನಲ್ಲಿ ಇಲ್ಲ. ಸೈಡ್‌ಬಾರ್‌ನಲ್ಲಿ API key ಹಾಕಿ ಯಾವುದೇ ಔಷಧಿ ಹುಡುಕಿ."
+                    f"'{q}' not in local DB. Add Gemini API key to search ANY medicine.",
+                    f"ಸ್ಥಳೀಯ DB ನಲ್ಲಿ ಇಲ್ಲ. ಸೈಡ್ಬಾರ್ನಲ್ಲಿ API key ಹಾಕಿ."
                 ))
 
     st.markdown("---")
@@ -403,7 +385,7 @@ with tab2:
                 st.session_state["q"] = k
                 st.info(MED_KB[k]["kn"])
 
-# ===== TAB 3: REMINDERS =====
+# ---------- TAB 3: REMINDERS ----------
 with tab3:
     st.subheader(t("⏰ Today's Schedule", "⏰ ಇಂದಿನ ವೇಳಾಪಟ್ಟಿ"))
 
@@ -470,4 +452,4 @@ with tab3:
         )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Built by Bharath Gowda | v4.2 Current Models (Gemini 3.x)")
+st.sidebar.caption("Built by Bharath Gowda | v5.0 Flash-Lite Speed Edition")
